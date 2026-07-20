@@ -1,10 +1,15 @@
+"use client";
+
 import Link from "next/link";
+import { useUser, SignInButton, UserButton } from "@clerk/nextjs";
 
 interface NavbarProps {
   activePath?: string;
 }
 
 export default function Navbar({ activePath = "/" }: NavbarProps) {
+  const { isLoaded, isSignedIn } = useUser();
+
   return (
     <header className="navbar">
       <div className="navbar-inner">
@@ -44,9 +49,17 @@ export default function Navbar({ activePath = "/" }: NavbarProps) {
           <button className="btn btn-primary" id="subscribe-btn">
             Subscribe
           </button>
-          <button className="btn btn-secondary" id="login-btn">
-            Login
-          </button>
+          {isLoaded ? (
+            isSignedIn ? (
+              <UserButton />
+            ) : (
+              <SignInButton mode="modal">
+                <button className="btn btn-secondary" id="login-btn">
+                  Sign In
+                </button>
+              </SignInButton>
+            )
+          ) : null}
         </div>
       </div>
     </header>

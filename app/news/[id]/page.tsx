@@ -54,7 +54,10 @@ function NewsletterBar() {
 }
 
 /* ─── Details Page Component ─────────────────────────────── */
+// Authentication is enforced by the Clerk middleware in proxy.ts.
+// No page-level auth.protect() needed — that caused the infinite redirect loop.
 export default async function NewsDetailsPage({ params }: PageProps) {
+
   const { id } = await params;
   const article = MOCK_ARTICLES.find((a) => String(a.id) === id);
 
