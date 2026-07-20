@@ -75,7 +75,7 @@ export interface OxylabsScheduleRunRow {
 
 export type SourceInsert = Omit<SourceRow, "id" | "created_at" | "updated_at">;
 
-export type ArticleInsert = Omit<ArticleRow, "id" | "created_at"> & {
+export type ArticleInsert = Omit<ArticleRow, "id" | "created_at" | "scraped_at" | "analyzed_at"> & {
   scraped_at?: string;
   analyzed_at?: string | null;
 };
@@ -85,7 +85,9 @@ export type ArticleAnalysisInsert = Omit<
   "id" | "created_at"
 >;
 
-export type LogInsert = Omit<LogRow, "id" | "created_at">;
+export type LogInsert = Omit<LogRow, "id" | "created_at" | "error"> & {
+  error?: string | null;
+};
 
 export type OxylabsScheduleInsert = Omit<
   OxylabsScheduleRow,
