@@ -3,14 +3,10 @@ import Link from "next/link";
 import TopBar from "@/app/_components/TopBar";
 import Navbar from "@/app/_components/Navbar";
 import Footer from "@/app/_components/Footer";
-import { MOCK_ARTICLES } from "@/app/_lib/mock-data";
-
-/* ─── Static params generation ───────────────────────────── */
-export async function generateStaticParams() {
-  return MOCK_ARTICLES.map((article) => ({
-    id: String(article.id),
-  }));
-}
+import {
+  getArticleWithAnalysis,
+  getArticlesWithAnalysis,
+} from "@/lib/supabase/queries/articles";
 
 /* ─── Page metadata ──────────────────────────────────────── */
 interface PageProps {
@@ -19,9 +15,11 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps) {
   const { id } = await params;
-  const article = MOCK_ARTICLES.find((a) => String(a.id) === id);
+  const article = await getArticleWithAnalysis(id);
   return {
-    title: article ? `${article.title} - Skew News` : "Article Not Found - Skew News",
+    title: article
+      ? `${article.title} - Skew News`
+      : "Article Not Found - Skew News",
   };
 }
 
@@ -53,55 +51,84 @@ function NewsletterBar() {
   );
 }
 
+/* ─── Helpers ────────────────────────────────────────────── */
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function estimateReadTime(text: string): string {
+  const words = text.split(/\s+/).length;
+  const minutes = Math.max(1, Math.ceil(words / 250));
+  return `${minutes} min read`;
+}
+
+/** Split raw text into paragraphs for display. */
+function splitParagraphs(text: string): string[] {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 /* ─── Details Page Component ─────────────────────────────── */
 // Authentication is enforced by the Clerk middleware in proxy.ts.
-// No page-level auth.protect() needed — that caused the infinite redirect loop.
 export default async function NewsDetailsPage({ params }: PageProps) {
-
   const { id } = await params;
-  const article = MOCK_ARTICLES.find((a) => String(a.id) === id);
+  const article = await getArticleWithAnalysis(id);
 
   if (!article) {
     notFound();
   }
 
+  const analysis = article.analysis;
+  const left = analysis?.left_percentage ?? 33;
+  const center = analysis?.center_percentage ?? 34;
+  const right = analysis?.right_percentage ?? 33;
+  const dateStr = formatDate(article.published_at);
+  const readTime = estimateReadTime(article.raw_text);
+  const paragraphs = splitParagraphs(article.raw_text);
+
   // Get up to 6 related stories (excluding current article)
-  const relatedArticles = MOCK_ARTICLES.filter((a) => a.id !== article.id).slice(0, 6);
+  const allArticles = await getArticlesWithAnalysis(7);
+  const relatedArticles = allArticles
+    .filter((a) => a.id !== article.id)
+    .slice(0, 6);
 
   // Derive political framing labels & colors for sidebar
   let biasColorClass = "sidebar-bias-value--mixed";
   let biasSubColorClass = "sidebar-bias-sub--center";
   let overallLabel = "Mixed";
 
-  if (article.left > 45) {
-    biasColorClass = "sidebar-bias-value--left";
-    biasSubColorClass = "sidebar-bias-sub--left";
-    overallLabel = `Left ${article.left}%`;
-  } else if (article.right > 45) {
-    biasColorClass = "sidebar-bias-value--right";
-    biasSubColorClass = "sidebar-bias-sub--right";
-    overallLabel = `Right ${article.right}%`;
-  } else if (article.center > 45) {
-    biasColorClass = "sidebar-bias-value--center";
-    biasSubColorClass = "sidebar-bias-sub--center";
-    overallLabel = `Center ${article.center}%`;
-  } else {
-    // Mixed / balanced representation
-    if (article.right > article.left) {
-      biasColorClass = "sidebar-bias-value--right";
-      biasSubColorClass = "sidebar-bias-sub--right";
-      overallLabel = `Right ${article.right}%`;
-    } else if (article.left > article.right) {
+  if (analysis) {
+    if (left > 45) {
       biasColorClass = "sidebar-bias-value--left";
       biasSubColorClass = "sidebar-bias-sub--left";
-      overallLabel = `Left ${article.left}%`;
+      overallLabel = `Left ${left}%`;
+    } else if (right > 45) {
+      biasColorClass = "sidebar-bias-value--right";
+      biasSubColorClass = "sidebar-bias-sub--right";
+      overallLabel = `Right ${right}%`;
+    } else if (center > 45) {
+      biasColorClass = "sidebar-bias-value--center";
+      biasSubColorClass = "sidebar-bias-sub--center";
+      overallLabel = `Center ${center}%`;
+    } else {
+      if (right > left) {
+        biasColorClass = "sidebar-bias-value--right";
+        biasSubColorClass = "sidebar-bias-sub--right";
+        overallLabel = `Right ${right}%`;
+      } else if (left > right) {
+        biasColorClass = "sidebar-bias-value--left";
+        biasSubColorClass = "sidebar-bias-sub--left";
+        overallLabel = `Left ${left}%`;
+      }
     }
   }
-
-  // Count source alignments for sidebar panel C
-  const leftSourcesCount = article.sourceList.filter((s) => s.bias === "Left").length;
-  const centerSourcesCount = article.sourceList.filter((s) => s.bias === "Center").length;
-  const rightSourcesCount = article.sourceList.filter((s) => s.bias === "Right").length;
 
   return (
     <>
@@ -111,14 +138,14 @@ export default async function NewsDetailsPage({ params }: PageProps) {
       <main style={{ flex: 1, backgroundColor: "var(--color-bg-primary)" }}>
         <div className="article-detail-outer">
           <div className="article-detail-layout">
-            
+
             {/* Left Column: Core content */}
             <article className="article-detail-main">
               {/* Breadcrumb */}
               <div className="article-breadcrumb">
-                <span>{article.category}</span>
+                <span>{article.source?.name ?? "Unknown Source"}</span>
                 <span className="article-breadcrumb-sep">·</span>
-                <span>{article.region}</span>
+                <span>{analysis?.bias_label ?? "Pending"}</span>
               </div>
 
               {/* Title */}
@@ -127,11 +154,11 @@ export default async function NewsDetailsPage({ params }: PageProps) {
               {/* Byline + actions */}
               <div className="article-meta-row">
                 <div className="article-byline">
-                  <span>By {article.author}</span>
+                  <span>{article.source?.name}</span>
                   <span className="byline-sep">|</span>
-                  <span>{article.date}</span>
+                  <span>{dateStr}</span>
                   <span className="byline-sep">|</span>
-                  <span>{article.readTime}</span>
+                  <span>{readTime}</span>
                 </div>
                 <div className="article-actions">
                   <button className="article-action-btn" aria-label="Save article">
@@ -151,251 +178,243 @@ export default async function NewsDetailsPage({ params }: PageProps) {
               {/* Hero Image */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={article.imageUrl}
+                src={article.image_url}
                 alt={article.title}
                 className="article-hero-img"
               />
-              <p className="article-caption">{article.imageCaption}</p>
 
               {/* Proportional Bias Distribution Block */}
-              <div className="bias-distribution-block">
-                <h4 className="bias-distribution-label">
-                  Bias Distribution
-                  <span className="bias-distribution-info-icon" title="View details info">i</span>
-                </h4>
-                <div
-                  className="bias-distribution-bar"
-                  role="img"
-                  aria-label={`Bias Distribution: Left ${article.left}%, Center ${article.center}%, Right ${article.right}%`}
-                >
+              {analysis && (
+                <div className="bias-distribution-block">
+                  <h4 className="bias-distribution-label">
+                    Bias Distribution
+                    <span className="bias-distribution-info-icon" title="View details info">i</span>
+                  </h4>
                   <div
-                    className="bias-distribution-seg bias-distribution-seg--left"
-                    style={{ width: `${article.left}%` }}
+                    className="bias-distribution-bar"
+                    role="img"
+                    aria-label={`Bias Distribution: Left ${left}%, Center ${center}%, Right ${right}%`}
                   >
-                    {article.left >= 12 ? `Left ${article.left}%` : ""}
+                    <div
+                      className="bias-distribution-seg bias-distribution-seg--left"
+                      style={{ width: `${left}%` }}
+                    >
+                      {left >= 12 ? `Left ${left}%` : ""}
+                    </div>
+                    <div
+                      className="bias-distribution-seg bias-distribution-seg--center"
+                      style={{ width: `${center}%` }}
+                    >
+                      {center >= 15 ? `Center ${center}%` : ""}
+                    </div>
+                    <div
+                      className="bias-distribution-seg bias-distribution-seg--right"
+                      style={{ width: `${right}%` }}
+                    >
+                      {right >= 12 ? `Right ${right}%` : ""}
+                    </div>
                   </div>
-                  <div
-                    className="bias-distribution-seg bias-distribution-seg--center"
-                    style={{ width: `${article.center}%` }}
-                  >
-                    {article.center >= 15 ? `Center ${article.center}%` : ""}
-                  </div>
-                  <div
-                    className="bias-distribution-seg bias-distribution-seg--right"
-                    style={{ width: `${article.right}%` }}
-                  >
-                    {article.right >= 12 ? `Right ${article.right}%` : ""}
-                  </div>
+                  <p className="bias-distribution-sources">
+                    Confidence: {Math.round((analysis.confidence ?? 0) * 100)}%
+                  </p>
                 </div>
-                <p className="bias-distribution-sources">{article.sources} sources</p>
-              </div>
+              )}
 
               {/* Article Paragraphs */}
               <div className="article-body">
-                {article.body.slice(0, 3).map((para, idx) => (
-                  <p key={idx}>{para}</p>
-                ))}
-                
-                {article.quote && (
-                  <blockquote className="article-blockquote">
-                    {article.quote}
-                  </blockquote>
-                )}
-
-                {article.body.slice(3).map((para, idx) => (
+                {paragraphs.map((para, idx) => (
                   <p key={idx}>{para}</p>
                 ))}
               </div>
 
               {/* Related Stories Grid */}
-              <section className="related-stories-section">
-                <h3 className="related-stories-heading">Related Stories</h3>
-                <div className="related-stories-grid">
-                  {relatedArticles.map((rel) => (
-                    <Link
-                      key={rel.id}
-                      href={`/news/${rel.id}`}
-                      className="related-card"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={rel.imageUrl}
-                        alt={rel.title}
-                        className="related-card-img"
-                        loading="lazy"
-                      />
-                      <div className="related-card-body">
-                        <p className="related-card-meta">
-                          {rel.category}
-                          <span className="article-breadcrumb-sep">·</span>
-                          {rel.region}
-                        </p>
-                        <h4 className="related-card-title">{rel.title}</h4>
-                        <p className="related-card-info">
-                          {rel.date}
-                          <span className="byline-sep" style={{ margin: "0 6px" }}>|</span>
-                          {rel.readTime}
-                        </p>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </section>
+              {relatedArticles.length > 0 && (
+                <section className="related-stories-section">
+                  <h3 className="related-stories-heading">Related Stories</h3>
+                  <div className="related-stories-grid">
+                    {relatedArticles.map((rel) => (
+                      <Link
+                        key={rel.id}
+                        href={`/news/${rel.id}`}
+                        className="related-card"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={rel.image_url}
+                          alt={rel.title}
+                          className="related-card-img"
+                          loading="lazy"
+                        />
+                        <div className="related-card-body">
+                          <p className="related-card-meta">
+                            {rel.source?.name ?? "Unknown"}
+                            <span className="article-breadcrumb-sep">·</span>
+                            {rel.analysis?.bias_label ?? "Pending"}
+                          </p>
+                          <h4 className="related-card-title">{rel.title}</h4>
+                          <p className="related-card-info">
+                            {formatDate(rel.published_at)}
+                            <span className="byline-sep" style={{ margin: "0 6px" }}>|</span>
+                            {estimateReadTime(rel.raw_text)}
+                          </p>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </section>
+              )}
             </article>
 
             {/* Right Column: Sticky Sidebar Panels */}
             <aside className="article-detail-sidebar" aria-label="Analysis Sidebar">
               {/* Panel A: Bias Analysis */}
-              <div className="sidebar-panel">
-                <div className="sidebar-panel-header">
-                  <h4 className="sidebar-panel-title">Bias Analysis</h4>
-                  <span className="sidebar-info-icon" title="Bias Analysis Details">i</span>
-                </div>
-                <p className="sidebar-bias-caption">Overall Bias</p>
-                <h2 className={`sidebar-bias-value ${biasColorClass}`}>{overallLabel}</h2>
-                <p className={`sidebar-bias-sub ${biasSubColorClass}`}>
-                  Based on {article.sources} balanced sources
-                </p>
-
-                {/* Left Row */}
-                <div className="bias-row">
-                  <span className="bias-row-label">Left</span>
-                  <div className="bias-progress-track">
-                    <div
-                      className="bias-progress-fill bias-progress-fill--left"
-                      style={{ width: `${article.left}%` }}
-                    />
+              {analysis ? (
+                <div className="sidebar-panel">
+                  <div className="sidebar-panel-header">
+                    <h4 className="sidebar-panel-title">Bias Analysis</h4>
+                    <span className="sidebar-info-icon" title="Bias Analysis Details">i</span>
                   </div>
-                  <span className="bias-row-pct">{article.left}%</span>
-                </div>
+                  <p className="sidebar-bias-caption">Overall Bias</p>
+                  <h2 className={`sidebar-bias-value ${biasColorClass}`}>{overallLabel}</h2>
+                  <p className={`sidebar-bias-sub ${biasSubColorClass}`}>
+                    AI-estimated political framing
+                  </p>
 
-                {/* Center Row */}
-                <div className="bias-row">
-                  <span className="bias-row-label">Center</span>
-                  <div className="bias-progress-track">
-                    <div
-                      className="bias-progress-fill bias-progress-fill--center"
-                      style={{ width: `${article.center}%` }}
-                    />
-                  </div>
-                  <span className="bias-row-pct">{article.center}%</span>
-                </div>
-
-                {/* Right Row */}
-                <div className="bias-row">
-                  <span className="bias-row-label">Right</span>
-                  <div className="bias-progress-track">
-                    <div
-                      className="bias-progress-fill bias-progress-fill--right"
-                      style={{ width: `${article.right}%` }}
-                    />
-                  </div>
-                  <span className="bias-row-pct">{article.right}%</span>
-                </div>
-
-                <p className="sidebar-disclaimer">
-                  Our analysis is based on the political leaning of the publication and how the story is framed. Sources are weighted by reliability and recency.
-                </p>
-                <button className="btn btn-secondary sidebar-panel-cta">
-                  How We Analyze Bias
-                </button>
-              </div>
-
-              {/* Panel B: AI Summary */}
-              <div className="sidebar-panel">
-                <div className="sidebar-panel-header">
-                  <h4 className="sidebar-panel-title">AI Summary</h4>
-                  <span className="sidebar-info-icon" title="AI Summary Info">i</span>
-                </div>
-                <p className="ai-summary-meta">
-                  Generated {article.date} · 3 min read
-                </p>
-                <ul className="ai-summary-list">
-                  {article.aiSummary.map((bullet, idx) => (
-                    <li key={idx}>{bullet}</li>
-                  ))}
-                </ul>
-                <p className="sidebar-disclaimer">
-                  AI summaries can make mistakes.
-                </p>
-                <button className="btn btn-secondary sidebar-panel-cta">
-                  Provide Feedback
-                </button>
-              </div>
-
-              {/* Panel C: Source Breakdown */}
-              <div className="sidebar-panel">
-                <div className="sidebar-panel-header">
-                  <h4 className="sidebar-panel-title">Source Breakdown</h4>
-                  <span className="sidebar-info-icon" title="Source Breakdown Info">i</span>
-                </div>
-                <p className="source-count-label">{article.sources} Total Sources</p>
-
-                <div className="source-breakdown-rows">
-                  {/* Left sources */}
-                  <div className="source-breakdown-row">
-                    <span className="source-breakdown-row-label">Left</span>
+                  {/* Left Row */}
+                  <div className="bias-row">
+                    <span className="bias-row-label">Left</span>
                     <div className="bias-progress-track">
                       <div
                         className="bias-progress-fill bias-progress-fill--left"
-                        style={{ width: `${(leftSourcesCount / article.sourceList.length) * 100}%` }}
+                        style={{ width: `${left}%` }}
                       />
                     </div>
-                    <span className="source-breakdown-row-count">
-                      {leftSourcesCount} ({Math.round((leftSourcesCount / article.sourceList.length) * 100)}%)
-                    </span>
+                    <span className="bias-row-pct">{left}%</span>
                   </div>
 
-                  {/* Center sources */}
-                  <div className="source-breakdown-row">
-                    <span className="source-breakdown-row-label">Center</span>
+                  {/* Center Row */}
+                  <div className="bias-row">
+                    <span className="bias-row-label">Center</span>
                     <div className="bias-progress-track">
                       <div
                         className="bias-progress-fill bias-progress-fill--center"
-                        style={{ width: `${(centerSourcesCount / article.sourceList.length) * 100}%` }}
+                        style={{ width: `${center}%` }}
                       />
                     </div>
-                    <span className="source-breakdown-row-count">
-                      {centerSourcesCount} ({Math.round((centerSourcesCount / article.sourceList.length) * 100)}%)
-                    </span>
+                    <span className="bias-row-pct">{center}%</span>
                   </div>
 
-                  {/* Right sources */}
-                  <div className="source-breakdown-row">
-                    <span className="source-breakdown-row-label">Right</span>
+                  {/* Right Row */}
+                  <div className="bias-row">
+                    <span className="bias-row-label">Right</span>
                     <div className="bias-progress-track">
                       <div
                         className="bias-progress-fill bias-progress-fill--right"
-                        style={{ width: `${(rightSourcesCount / article.sourceList.length) * 100}%` }}
+                        style={{ width: `${right}%` }}
                       />
                     </div>
-                    <span className="source-breakdown-row-count">
-                      {rightSourcesCount} ({Math.round((rightSourcesCount / article.sourceList.length) * 100)}%)
+                    <span className="bias-row-pct">{right}%</span>
+                  </div>
+
+                  {analysis.disclaimer && (
+                    <p className="sidebar-disclaimer">{analysis.disclaimer}</p>
+                  )}
+                  <button className="btn btn-secondary sidebar-panel-cta">
+                    How We Analyze Bias
+                  </button>
+                </div>
+              ) : (
+                <div className="sidebar-panel">
+                  <div className="sidebar-panel-header">
+                    <h4 className="sidebar-panel-title">Bias Analysis</h4>
+                  </div>
+                  <p className="sidebar-disclaimer" style={{ padding: "1rem 0" }}>
+                    Analysis pending. This article has not been processed by the AI yet.
+                  </p>
+                </div>
+              )}
+
+              {/* Panel B: AI Summary */}
+              {analysis ? (
+                <div className="sidebar-panel">
+                  <div className="sidebar-panel-header">
+                    <h4 className="sidebar-panel-title">AI Summary</h4>
+                    <span className="sidebar-info-icon" title="AI Summary Info">i</span>
+                  </div>
+                  <p className="ai-summary-meta">
+                    Generated {formatDate(analysis.created_at)} · {analysis.model}
+                  </p>
+                  <div className="ai-summary-list" style={{ whiteSpace: "pre-wrap" }}>
+                    <p>{analysis.summary}</p>
+                  </div>
+
+                  {/* Framing notes */}
+                  {analysis.framing_notes && (
+                    <div style={{ marginTop: "0.75rem" }}>
+                      <p className="sidebar-bias-caption" style={{ marginBottom: "0.25rem" }}>
+                        Framing Notes
+                      </p>
+                      <p className="sidebar-disclaimer">{analysis.framing_notes}</p>
+                    </div>
+                  )}
+
+                  {/* Loaded terms */}
+                  {analysis.loaded_terms && analysis.loaded_terms.length > 0 && (
+                    <div style={{ marginTop: "0.75rem" }}>
+                      <p className="sidebar-bias-caption" style={{ marginBottom: "0.25rem" }}>
+                        Loaded Terms
+                      </p>
+                      <p className="sidebar-disclaimer">
+                        {analysis.loaded_terms.join(", ")}
+                      </p>
+                    </div>
+                  )}
+
+                  <p className="sidebar-disclaimer">
+                    AI summaries can make mistakes.
+                  </p>
+                  <button className="btn btn-secondary sidebar-panel-cta">
+                    Provide Feedback
+                  </button>
+                </div>
+              ) : (
+                <div className="sidebar-panel">
+                  <div className="sidebar-panel-header">
+                    <h4 className="sidebar-panel-title">AI Summary</h4>
+                  </div>
+                  <p className="sidebar-disclaimer" style={{ padding: "1rem 0" }}>
+                    Summary pending. This article has not been analyzed yet.
+                  </p>
+                </div>
+              )}
+
+              {/* Panel C: Sentiment */}
+              {analysis && (
+                <div className="sidebar-panel">
+                  <div className="sidebar-panel-header">
+                    <h4 className="sidebar-panel-title">Sentiment</h4>
+                    <span className="sidebar-info-icon" title="Sentiment Info">i</span>
+                  </div>
+                  <p className="source-count-label" style={{ textTransform: "capitalize" }}>
+                    {analysis.sentiment_label}
+                  </p>
+                  <div className="bias-row" style={{ marginTop: "0.5rem" }}>
+                    <span className="bias-row-label">Score</span>
+                    <div className="bias-progress-track">
+                      <div
+                        className="bias-progress-fill bias-progress-fill--center"
+                        style={{ width: `${((analysis.sentiment_score + 1) / 2) * 100}%` }}
+                      />
+                    </div>
+                    <span className="bias-row-pct">
+                      {analysis.sentiment_score.toFixed(2)}
                     </span>
                   </div>
+                  <p className="sidebar-disclaimer" style={{ marginTop: "0.5rem" }}>
+                    Sentiment ranges from −1 (negative) to +1 (positive).
+                  </p>
                 </div>
-
-                {/* Source Table */}
-                <div className="top-sources-header">
-                  <span>Top Sources</span>
-                  <span>Bias</span>
-                </div>
-                <div style={{ marginBottom: "var(--space-4)" }}>
-                  {article.sourceList.map((src, idx) => (
-                    <div key={idx} className="source-row">
-                      <span className="source-row-name">{src.name}</span>
-                      <span
-                        className={`source-bias-label--${src.bias.toLowerCase()}`}
-                      >
-                        {src.bias}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <button className="btn btn-secondary sidebar-panel-cta">
-                  View All Sources
-                </button>
-              </div>
+              )}
             </aside>
 
           </div>

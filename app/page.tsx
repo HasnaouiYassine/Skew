@@ -2,7 +2,9 @@ import Link from "next/link";
 import TopBar from "@/app/_components/TopBar";
 import Navbar from "@/app/_components/Navbar";
 import Footer from "@/app/_components/Footer";
-import { MOCK_ARTICLES, CATEGORIES, type Article } from "@/app/_lib/mock-data";
+import { getArticlesWithAnalysis } from "@/lib/supabase/queries/articles";
+import type { ArticleWithAnalysis } from "@/lib/supabase/types";
+import { CATEGORIES } from "@/app/_lib/mock-data";
 
 /* ─── Bias meter bar ─────────────────────────────────────── */
 function BiasMeter({
@@ -43,7 +45,20 @@ function BiasMeter({
 }
 
 /* ─── Article card ───────────────────────────────────────── */
-function ArticleCard({ article }: { article: Article }) {
+function ArticleCard({ article }: { article: ArticleWithAnalysis }) {
+  const left = article.analysis?.left_percentage ?? 33;
+  const center = article.analysis?.center_percentage ?? 34;
+  const right = article.analysis?.right_percentage ?? 33;
+  const biasLabel = article.analysis?.bias_label ?? "pending";
+  const sentimentLabel = article.analysis?.sentiment_label ?? "pending";
+
+  // Format the published date
+  const dateStr = new Date(article.published_at).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
   return (
     <Link
       href={`/news/${article.id}`}
@@ -54,7 +69,7 @@ function ArticleCard({ article }: { article: Article }) {
       {/* Image */}
       <div className="article-card-image-wrap">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={article.imageUrl} alt={article.title} loading="lazy" />
+        <img src={article.image_url} alt={article.title} loading="lazy" />
         <span
           className="article-card-info-btn"
           aria-label="Article source information"
@@ -67,17 +82,19 @@ function ArticleCard({ article }: { article: Article }) {
       {/* Body */}
       <div className="article-card-body">
         <p className="article-card-meta">
-          {article.category}
+          {article.source?.name ?? "Unknown Source"}
           <span className="article-card-meta-dot">·</span>
-          {article.region}
+          {dateStr}
         </p>
         <h2 className="article-card-title">{article.title}</h2>
-        <BiasMeter
-          left={article.left}
-          center={article.center}
-          right={article.right}
-        />
-        <p className="article-card-sources">{article.sources} sources</p>
+        {article.analysis && (
+          <>
+            <BiasMeter left={left} center={center} right={right} />
+            <p className="article-card-sources">
+              {biasLabel} · {sentimentLabel}
+            </p>
+          </>
+        )}
       </div>
     </Link>
   );
@@ -107,14 +124,32 @@ function CategoryStrip() {
   );
 }
 
+/* ─── Empty state ────────────────────────────────────────── */
+function EmptyState() {
+  return (
+    <section className="news-section" aria-label="No articles yet">
+      <div className="news-section-inner" style={{ textAlign: "center", padding: "4rem 1rem" }}>
+        <h1 className="news-section-heading">Top News</h1>
+        <p style={{ color: "var(--color-text-secondary, #888)", fontSize: "1.1rem", marginTop: "1rem" }}>
+          No analyzed articles yet. Once scraping and AI analysis run, articles will appear here.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 /* ─── News grid ──────────────────────────────────────────── */
-function NewsGrid() {
+function NewsGrid({ articles }: { articles: ArticleWithAnalysis[] }) {
+  if (articles.length === 0) {
+    return <EmptyState />;
+  }
+
   return (
     <section className="news-section" aria-label="Top News">
       <div className="news-section-inner">
         <h1 className="news-section-heading">Top News</h1>
         <div className="news-grid">
-          {MOCK_ARTICLES.map((article) => (
+          {articles.map((article) => (
             <ArticleCard key={article.id} article={article} />
           ))}
         </div>
@@ -123,15 +158,17 @@ function NewsGrid() {
   );
 }
 
-/* ─── Page ───────────────────────────────────────────────── */
-export default function HomePage() {
+/* ─── Page (Server Component — fetches from Supabase) ────── */
+export default async function HomePage() {
+  const articles = await getArticlesWithAnalysis(20);
+
   return (
     <>
       <TopBar />
       <Navbar activePath="/" />
       <CategoryStrip />
       <main style={{ flex: 1, backgroundColor: "var(--color-bg-primary)" }}>
-        <NewsGrid />
+        <NewsGrid articles={articles} />
       </main>
       <Footer />
     </>
