@@ -11,9 +11,9 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "biasly — Balanced news coverage, powered by AI.",
+  title: "Skew — Balanced news coverage, powered by AI.",
   description:
-    "biasly collects real news articles, analyzes them with AI, and surfaces clear sentiment and framing insights so you can read the news with confidence.",
+    "Skew collects real news articles, analyzes them with AI, and surfaces clear sentiment and framing insights so you can read the news with confidence.",
 };
 
 export default function RootLayout({

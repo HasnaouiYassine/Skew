@@ -66,7 +66,7 @@ async function oxyApiFetch(
  */
 export async function createSchedule(
   sourceUrl: string,
-  cron = "15 * * * *",
+  cron = "0 6 * * *",
   endTime = "2035-12-31 23:59:59"
 ): Promise<{ scheduleId: string }> {
   console.log(`  [scheduler] Creating schedule for: ${sourceUrl}`);

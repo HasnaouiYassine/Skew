@@ -15,6 +15,7 @@ import {
   getSchedulesWithSources,
   upsertSchedule,
   getAllSchedules,
+  deleteSchedulesNotIn,
 } from "@/lib/supabase/queries/schedules";
 import { getActiveSources } from "@/lib/supabase/queries/sources";
 import { insertLog } from "@/lib/supabase/queries/logs";
@@ -65,22 +66,35 @@ export async function POST(request: NextRequest) {
     const sources = await getActiveSources();
     console.log(`  [sync] Found ${sources.length} active source(s)`);
 
-    // 2. Create schedules for sources that don't have one yet
+    // 2. Deactivate all existing schedules on Oxylabs and clear the DB
     const existingSchedules = await getAllSchedules();
-    const existingBySourceId = new Map(
-      existingSchedules.map((s) => [s.source_id, s])
-    );
+    const existingOxyIds = existingSchedules.map((s) => s.oxylabs_schedule_id);
+
+    for (const schedule of existingSchedules) {
+      try {
+        await deactivateSchedule(schedule.oxylabs_schedule_id);
+        console.log(`  [sync] Deactivated old schedule: ${schedule.oxylabs_schedule_id}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`Failed to deactivate ${schedule.oxylabs_schedule_id}: ${msg}`);
+        console.error(`  [sync] Failed to deactivate schedule ${schedule.oxylabs_schedule_id}: ${msg}`);
+      }
+    }
+
+    // Delete all existing DB rows
+    if (existingOxyIds.length > 0) {
+      await deleteSchedulesNotIn([]);
+      console.log(`  [sync] Cleared ${existingSchedules.length} existing schedule row(s)`);
+    }
+
+    // 3. Create fresh schedules for all active sources with the current cron
+    const newOxyIds: string[] = [];
 
     for (const source of sources) {
-      const existing = existingBySourceId.get(source.id);
-      if (existing) {
-        console.log(`  [sync] Schedule exists for ${source.name} (ID: ${existing.oxylabs_schedule_id})`);
-        continue;
-      }
-
       try {
         const { scheduleId } = await createSchedule(source.listing_url);
         await upsertSchedule(source.id, scheduleId);
+        newOxyIds.push(scheduleId);
         summary.created++;
         console.log(`  [sync] ✓ Created schedule for ${source.name} → ${scheduleId}`);
       } catch (err) {
@@ -90,20 +104,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. After creating new schedules, check for orphans on Oxylabs
+    // 4. Check for orphan schedules on Oxylabs (ones we didn't just create)
     try {
       const oxylabsIds = await listSchedules();
-      const dbIds = new Set(
-        existingSchedules.map((s) => s.oxylabs_schedule_id)
-      );
-
-      // Add newly created schedule IDs
-      for (const s of await getAllSchedules()) {
-        dbIds.add(s.oxylabs_schedule_id);
-      }
+      const ourIds = new Set(newOxyIds);
 
       for (const oxyId of oxylabsIds) {
-        if (!dbIds.has(oxyId)) {
+        if (!ourIds.has(oxyId)) {
           try {
             await deactivateSchedule(oxyId);
             summary.deactivated++;
